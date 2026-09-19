@@ -15,8 +15,8 @@
 需要 Node.js **22.13 或更新版本**；已在 Windows / Node 22.23.1 验证。使用内置 `node:sqlite`，无需安装数据库服务；Node 22 可能提示 SQLite 仍是实验功能。
 
 ```powershell
-git clone https://github.com/tianyin231/shiguang-image-workbench.git
-cd shiguang-image-workbench
+git clone https://github.com/tianyin231/shiguang.git
+cd shiguang
 npm ci
 Copy-Item .env.example .env
 npm run dev

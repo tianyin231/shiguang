@@ -1,9 +1,9 @@
 {
-  "name": "shiguang-image-workbench",
+  "name": "shiguang",
   "description": "拾光：多模型并发生图、无限画布与图生图工作台",
   "license": "MIT",
   "private": true,
-  "repository": "https://github.com/tianyin231/shiguang-image-workbench.git",
+  "repository": "https://github.com/tianyin231/shiguang.git",
   "version": "1.0.0",
   "type": "module",
   "engines": {
