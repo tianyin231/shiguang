@@ -1,6 +1,5 @@
 # 拾光 · AI 图像生成工作台
 
-[![CI](https://github.com/tianyin231/shiguang-image-workbench/actions/workflows/ci.yml/badge.svg)](https://github.com/tianyin231/shiguang-image-workbench/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 同一轮提示词保留一个节点，每张图片独立连线。从图片点击「修改这张图」即可生成新分支，保留原图和创作路径。
