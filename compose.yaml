@@ -1,0 +1,22 @@
+services:
+  workbench:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "4327:4327"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4327
+      DATA_DIR: /app/data
+      OUTPUT_DIR: /app/outputs
+      WORKER_ENABLED: "true"
+      WORKER_CONCURRENCY: 6
+      COOKIE_SECURE: "false"
+    volumes:
+      - workbench-data:/app/data
+      - workbench-images:/app/outputs
+volumes:
+  workbench-data:
+  workbench-images:

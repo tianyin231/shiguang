@@ -1,0 +1,14 @@
+node_modules
+dist
+data
+outputs
+.env
+.env.*
+!.env.example
+public/samples
+generated_images
+*.sqlite*
+*.db
+.git
+*.log
+tests
