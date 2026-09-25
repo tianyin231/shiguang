@@ -18,6 +18,7 @@ import {
   Radio,
   LogOut,
   CircleHelp,
+  Wrench,
 } from "lucide-react";
 import { useStore, type Page } from "./store";
 import { post, api } from "./api";
@@ -25,6 +26,7 @@ import { Button, Field, Modal, Busy } from "./components";
 import { CanvasPage } from "./CanvasPage";
 import { Composer } from "./Composer";
 import { WorkflowGuide } from "./WorkflowGuide";
+import ToolboxPage from "./ToolboxPage";
 import {
   SettingsPage,
   ModelsPage,
@@ -37,6 +39,7 @@ import type { Config, Project, Session } from "../shared/types";
 const nav: { id: Page; label: string; icon: typeof Images }[] = [
   { id: "canvas", label: "创作画布", icon: LayoutDashboard },
   { id: "gallery", label: "作品图库", icon: Images },
+  { id: "toolbox", label: "图像工具箱", icon: Wrench },
   { id: "tasks", label: "生成任务", icon: ListTodo },
   { id: "models", label: "模型管理", icon: Layers3 },
   { id: "memory", label: "创作记忆", icon: CircuitBoard },
@@ -296,6 +299,8 @@ export function App() {
               <TasksPage />
             ) : s.page === "gallery" ? (
               <GalleryPage />
+            ) : s.page === "toolbox" ? (
+              <ToolboxPage />
             ) : s.page === "costs" ? (
               <CostsPage />
             ) : (

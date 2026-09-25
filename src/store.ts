@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Config, Snapshot, ImageAsset, Task } from "../shared/types";
 import { api } from "./api";
 export type Page =
-  "canvas" | "models" | "tasks" | "gallery" | "costs" | "memory" | "settings";
+  "canvas" | "gallery" | "toolbox" | "models" | "tasks" | "costs" | "memory" | "settings";
 interface Store {
   config: Config | null;
   data: Snapshot;

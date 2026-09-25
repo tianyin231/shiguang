@@ -49,6 +49,7 @@ import {
   writeTask,
 } from "./queue";
 import { injectMemory } from "./memory";
+import { registerVideoRoutes } from "./video";
 import {
   generationSchema,
   providerSchema,
@@ -173,6 +174,7 @@ export function createApp() {
       res.cookie("workbench_device", d.token, cookieOptions);
     next();
   });
+  registerVideoRoutes(app);
   app.get("/api/config", (req, res) =>
     res.json({ ...config(req), deviceToken: req.device.token }),
   );

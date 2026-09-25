@@ -221,3 +221,40 @@ export interface Estimate {
   warnings: string[];
   items: { modelId: string; amount: number; currency: string }[];
 }
+
+/* ---------------- 视频拆帧（服务端管线） ---------------- */
+export interface VideoFrameRange {
+  start_sec: number;
+  end_sec: number | null;
+}
+export interface VideoJobParams {
+  fps: number;
+  frame_range: VideoFrameRange;
+  max_frames: number;
+  target_size: { w: number; h: number };
+  bg_color: string;
+  transparent: boolean;
+  padding: number;
+  spacing: number;
+  layout_mode: "fixed_columns" | "auto_square";
+  columns: number;
+  matte_mode: "none" | "chroma" | "ai";
+  chroma_color: string;
+  chroma_tolerance: number;
+  crop_mode: "none" | "tight_bbox" | "safe_bbox";
+}
+export type VideoJobStatus = "queued" | "processing" | "completed" | "failed";
+export interface VideoJob {
+  id: string;
+  status: VideoJobStatus;
+  progress: number;
+  params: VideoJobParams;
+  error: { code: string; message: string } | null;
+  result: { frame_count: number; width: number; height: number } | null;
+  createdAt: number;
+}
+export interface VideoCapability {
+  ffmpeg: boolean;
+  ffprobe: boolean;
+  aiMatte: boolean;
+}
