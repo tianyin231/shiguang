@@ -260,7 +260,7 @@ export function App() {
             </span>
           </div>
         </header>
-        {!provider && (
+        {!provider && s.page !== "toolbox" && (
           <div className="connect-banner">
             <span>连接你自己的模型，从第一幅作品开始。</span>
             <div>

@@ -10,10 +10,30 @@ import {
   Download,
   Copy,
   ImagePlus,
+  Wrench,
 } from "lucide-react";
 import { useStore } from "./store";
 import { patch, money } from "./api";
 import type { ImageAsset } from "../shared/types";
+export function PageHeading({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="page-heading">
+      <div>
+        <h1>{title}</h1>
+        <p>{description}</p>
+      </div>
+      {children && <div className="row">{children}</div>}
+    </div>
+  );
+}
 export function Button({
   children,
   className = "",
@@ -134,7 +154,7 @@ export function ImageActions({
   compact?: boolean;
   onReference?: () => void;
 }) {
-  const { refresh, set, toast, beginEdit } = useStore();
+  const { refresh, set, toast, beginEdit, beginToolEdit } = useStore();
   const update = async (value: unknown) => {
     try {
       await patch("/images/" + image.id, value);
@@ -171,6 +191,17 @@ export function ImageActions({
       <a className="icon-btn" href={image.url + "?download=1"} title="下载原图">
         <Download size={16} />
       </a>
+      <button
+        className="icon-btn"
+        title="在工具箱处理"
+        aria-label="在工具箱处理"
+        onClick={() => {
+          beginToolEdit([image]);
+          onReference?.();
+        }}
+      >
+        <Wrench size={16} />
+      </button>
       {!compact && (
         <>
           <button

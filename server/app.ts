@@ -50,6 +50,7 @@ import {
 } from "./queue";
 import { injectMemory } from "./memory";
 import { registerVideoRoutes } from "./video";
+import { registerImageToolRoutes } from "./image-tools";
 import {
   generationSchema,
   providerSchema,
@@ -175,6 +176,7 @@ export function createApp() {
     next();
   });
   registerVideoRoutes(app);
+  registerImageToolRoutes(app);
   app.get("/api/config", (req, res) =>
     res.json({ ...config(req), deviceToken: req.device.token }),
   );

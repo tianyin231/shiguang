@@ -1,7 +1,7 @@
-export async function api<T>(
+async function request(
   url: string,
   options: RequestInit = {},
-): Promise<T> {
+): Promise<Response> {
   const token = localStorage.getItem("workbench-token");
   const res = await fetch("/api" + url, {
     ...options,
@@ -20,7 +20,17 @@ export async function api<T>(
       .catch(() => ({ error: `HTTP ${res.status}` }));
     throw new Error(error.error || "请求失败");
   }
-  return res.json();
+  return res;
+}
+export async function api<T>(
+  url: string,
+  options: RequestInit = {},
+): Promise<T> {
+  return (await request(url, options)).json();
+}
+export async function apiBlob(url: string, options: RequestInit = {}) {
+  const response = await request(url, options);
+  return { blob: await response.blob(), headers: response.headers };
 }
 export const post = <T>(url: string, body: unknown = {}) =>
   api<T>(url, { method: "POST", body: JSON.stringify(body) });

@@ -23,12 +23,15 @@ interface Store {
   loading: boolean;
   composerFocus: number;
   canvasFocusId: string;
+  toolboxImageIds: string[];
+  toolboxRequest: number;
   flushCanvas?: () => Promise<void>;
   set: (value: Partial<Store>) => void;
   setPrompt: (value: string) => void;
   setNegativePrompt: (value: string) => void;
   reuseTask: (task: Task) => void;
   beginEdit: (image: ImageAsset, instruction?: string) => void;
+  beginToolEdit: (images: ImageAsset[]) => void;
   refresh: () => Promise<void>;
   boot: () => Promise<void>;
   toast: (message: string) => void;
@@ -60,6 +63,8 @@ export const useStore = create<Store>((set, get) => ({
   loading: true,
   composerFocus: 0,
   canvasFocusId: "",
+  toolboxImageIds: [],
+  toolboxRequest: 0,
   setPrompt: (value) => {
     const current = get();
     if (current.reference)
@@ -110,6 +115,16 @@ export const useStore = create<Store>((set, get) => ({
             prompt: task.prompt,
             negativePrompt: task.params.negativePrompt || "",
           }),
+    });
+  },
+  beginToolEdit: (images) => {
+    if (!images.length) return;
+    get().set({
+      page: "toolbox",
+      projectId: images[0].projectId,
+      sessionId: images[0].sessionId,
+      toolboxImageIds: images.slice(0, 20).map((image) => image.id),
+      toolboxRequest: Date.now(),
     });
   },
   beginEdit: (image, instruction) => {

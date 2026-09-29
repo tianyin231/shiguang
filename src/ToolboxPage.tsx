@@ -1,5 +1,16 @@
-import { useEffect, useRef, useState } from "react";
-import { Button, Empty, Field } from "./components";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Clapperboard,
+  Eraser,
+  Film,
+  Grid2x2,
+  ImageIcon,
+  Scissors,
+  Settings2,
+  Upload,
+  WandSparkles,
+} from "lucide-react";
+import { Button, Busy, Empty, Field, PageHeading } from "./components";
 import { useStore } from "./store";
 import { api } from "./api";
 import {
@@ -23,8 +34,12 @@ import {
   type DecodedGif,
 } from "./imgkit/gifFrames";
 import { pixelateCanvas } from "./imgkit/pixelate";
+import "./image-tools.css";
 
 const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+const ImageToolsPanel = lazy(() =>
+  import("./ImageToolsPanel").then((module) => ({ default: module.ImageToolsPanel })),
+);
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -75,6 +90,7 @@ function FilePick({
     <label className="toolbox-file btn secondary">
       <input
         type="file"
+        aria-label={label}
         accept={accept}
         multiple={multiple}
         onChange={(e) => {
@@ -83,7 +99,8 @@ function FilePick({
           e.target.value = "";
         }}
       />
-      {label}
+      <Upload size={16} aria-hidden="true" />
+      <span>{label}</span>
     </label>
   );
 }
@@ -91,9 +108,36 @@ function FilePick({
 function Preview({ src, alt }: { src: string | null; alt: string }) {
   if (!src) return null;
   return (
-    <figure className="toolbox-preview checker">
-      <img src={src} alt={alt} />
+    <figure className="toolbox-preview">
+      <div className="toolbox-preview-image checker">
+        <img src={src} alt={alt} />
+      </div>
+      <figcaption>{alt}</figcaption>
     </figure>
+  );
+}
+
+function ToolControls({ children }: { children: ReactNode }) {
+  return (
+    <section className="toolbox-controls" aria-label="处理设置">
+      <h2 className="toolbox-panel-title">
+        <Settings2 size={16} aria-hidden="true" />
+        处理设置
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function ToolStage({ children }: { children: ReactNode }) {
+  return (
+    <section className="toolbox-stage" aria-label="素材预览">
+      <h2 className="toolbox-panel-title">
+        <ImageIcon size={16} aria-hidden="true" />
+        素材预览
+      </h2>
+      <div className="toolbox-stage-content">{children}</div>
+    </section>
   );
 }
 
@@ -161,7 +205,7 @@ function MatteTab() {
 
   return (
     <div className="toolbox-grid">
-      <div className="toolbox-controls">
+      <ToolControls>
         <FilePick label={file ? "换一张图" : "选择图片"} onFiles={pick} />
         {file && (
           <>
@@ -207,8 +251,8 @@ function MatteTab() {
             )}
           </>
         )}
-      </div>
-      <div className="toolbox-stage">
+      </ToolControls>
+      <ToolStage>
         {!file ? (
           <Empty title="从一张带纯色背景的图开始">
             绿幕、蓝幕或任意纯色底图都可以。全程在浏览器本地完成，不经过任何接口。
@@ -219,7 +263,7 @@ function MatteTab() {
             <Preview src={result} alt="抠图结果" />
           </>
         )}
-      </div>
+      </ToolStage>
     </div>
   );
 }
@@ -274,7 +318,7 @@ function GifTab() {
 
   return (
     <div>
-      <div className="toolbox-subtabs">
+      <div className="toolbox-subtabs" aria-label="GIF 处理方式">
         {(
           [
             ["split", "GIF 拆帧"],
@@ -286,6 +330,7 @@ function GifTab() {
           <button
             key={id}
             className={sub === id ? "active" : ""}
+            aria-pressed={sub === id}
             onClick={() => {
               setSub(id);
               resetResult();
@@ -296,7 +341,7 @@ function GifTab() {
         ))}
       </div>
       <div className="toolbox-grid">
-        <div className="toolbox-controls">
+        <ToolControls>
           {sub === "split" && (
             <>
               <FilePick
@@ -426,8 +471,18 @@ function GifTab() {
               下载结果
             </Button>
           )}
-        </div>
-        <div className="toolbox-stage">
+        </ToolControls>
+        <ToolStage>
+          {sub === "split" && !gif && (
+            <Empty title="选择一张 GIF 开始拆帧">
+              拆分后可预览动画帧，并打包下载 PNG 图片。
+            </Empty>
+          )}
+          {sub !== "split" && !result && files.length === 0 && (
+            <Empty title="选择多张图片开始合成">
+              按选择顺序排列图片，设置参数后生成预览。
+            </Empty>
+          )}
           {sub === "split" && gif && (
             <div className="toolbox-frames">
               {thumbs.map((u, i) => (
@@ -436,10 +491,12 @@ function GifTab() {
             </div>
           )}
           {sub !== "split" && <Preview src={result} alt="结果" />}
-          {(sub !== "split" || !gif) && !result && files.length > 0 && !busy && (
-            <p className="toolbox-hint">已选 {files.length} 张图片，设置好参数后点击左侧按钮。</p>
+          {sub !== "split" && !result && files.length > 0 && !busy && (
+            <Empty title={`已选择 ${files.length} 张图片`}>
+              设置好参数后，点击合成或拼接按钮查看结果。
+            </Empty>
           )}
-        </div>
+        </ToolStage>
       </div>
     </div>
   );
@@ -493,7 +550,7 @@ function SpriteTab() {
 
   return (
     <div className="toolbox-grid">
-      <div className="toolbox-controls">
+      <ToolControls>
         <FilePick label={img ? "换一张精灵图" : "选择精灵图"} onFiles={(f) => void openImage(f)} />
         {img && (
           <>
@@ -579,11 +636,11 @@ function SpriteTab() {
             )}
           </>
         )}
-      </div>
-      <div className="toolbox-stage">
+      </ToolControls>
+      <ToolStage>
         {!img ? (
-          <Empty title="把序列帧图交给我">
-            支持按列行均分拆分，或沿完全透明的行列间隙智能拆帧，拆完可重排合成、检测重复帧。
+          <Empty title="选择一张精灵图开始拆分">
+            按行列均分，或沿透明间隙拆帧，再合成精灵图与 GIF。
           </Empty>
         ) : cells.length === 0 ? (
           <p className="toolbox-hint">图片 {img.naturalWidth} × {img.naturalHeight}，选择拆分方式开始。</p>
@@ -594,7 +651,7 @@ function SpriteTab() {
             ))}
           </div>
         )}
-      </div>
+      </ToolStage>
     </div>
   );
 }
@@ -629,7 +686,7 @@ function PixelTab() {
 
   return (
     <div className="toolbox-grid">
-      <div className="toolbox-controls">
+      <ToolControls>
         <FilePick
           label={img ? "换一张图" : "选择图片"}
           onFiles={async (files) => {
@@ -671,8 +728,8 @@ function PixelTab() {
             )}
           </>
         )}
-      </div>
-      <div className="toolbox-stage">
+      </ToolControls>
+      <ToolStage>
         {!img ? (
           <Empty title="把图片变成像素块风格">
             拖动滑块实时调整颗粒大小，全部在浏览器本地完成。
@@ -683,7 +740,7 @@ function PixelTab() {
             <Preview src={result} alt="像素化结果" />
           </>
         )}
-      </div>
+      </ToolStage>
     </div>
   );
 }
@@ -701,7 +758,7 @@ function WatermarkTab() {
 
   return (
     <div className="toolbox-grid">
-      <div className="toolbox-controls">
+      <ToolControls>
         <FilePick
           label={file ? "换一张图" : "选择 Gemini 生成图"}
           onFiles={(files) => {
@@ -725,7 +782,7 @@ function WatermarkTab() {
                 const blob = await removeGeminiWatermarkFromBlob(file);
                 setResultBlob(blob);
                 setResult(track(URL.createObjectURL(blob)));
-                s.toast("水印已按反向 alpha 修复");
+                s.toast("水印已移除，可以下载处理结果");
               } catch (e) {
                 s.set({ error: `去水印失败：${(e as Error).message}` });
               } finally {
@@ -742,14 +799,13 @@ function WatermarkTab() {
           </Button>
         )}
         <p className="toolbox-hint">
-          识别 48 / 96 px 两种规格的 Gemini 星形水印并做反向 alpha 修复，
-          纯本地像素运算，不调用任何接口。
+          适用于 Gemini 生成图右下角的星形水印，处理在浏览器内完成。
         </p>
-      </div>
-      <div className="toolbox-stage">
+      </ToolControls>
+      <ToolStage>
         {!file ? (
           <Empty title="清理 AI 生成图上的可见水印">
-            把 Gemini 生成的图片拖进来，右下角星形水印会被就地修复，其余像素保持原样。
+            选择 Gemini 生成的原图，处理后可对比效果并下载 PNG。
           </Empty>
         ) : (
           <>
@@ -757,7 +813,7 @@ function WatermarkTab() {
             <Preview src={result} alt="去水印结果" />
           </>
         )}
-      </div>
+      </ToolStage>
     </div>
   );
 }
@@ -891,7 +947,7 @@ function VideoTab() {
 
   return (
     <div className="toolbox-grid">
-      <div className="toolbox-controls">
+      <ToolControls>
         <FilePick
           label={file ? file.name : "选择视频"}
           accept=".mp4,.mov,.webm,.avi,.mkv,video/mp4,video/quicktime,video/webm"
@@ -904,17 +960,17 @@ function VideoTab() {
           <input type="range" min={1} max={30} value={params.fps}
             onChange={(e) => set("fps", Number(e.target.value))} />
         </Field>
-        <div className="toolbox-row">
+        <div className="toolbox-fields">
           <Field label="开始秒">
             <input type="number" min={0} step={0.1} value={params.start_sec}
               onChange={(e) => set("start_sec", Number(e.target.value))} />
           </Field>
-          <Field label="结束秒（留空到结尾）">
-            <input type="number" min={0} step={0.1} value={params.end_sec}
+          <Field label="结束秒">
+            <input type="number" min={0} step={0.1} placeholder="留空到结尾" value={params.end_sec}
               onChange={(e) => set("end_sec", e.target.value)} />
           </Field>
         </div>
-        <div className="toolbox-row">
+        <div className="toolbox-fields">
           <Field label="目标宽">
             <input type="number" min={16} max={1024} value={params.target_w}
               onChange={(e) => set("target_w", Number(e.target.value))} />
@@ -935,7 +991,7 @@ function VideoTab() {
           </select>
         </Field>
         {params.matte_mode === "chroma" && (
-          <div className="toolbox-row">
+          <div className="toolbox-fields">
             <Field label="幕布颜色">
               <input type="color" value={params.chroma_color}
                 onChange={(e) => set("chroma_color", e.target.value)} />
@@ -970,12 +1026,11 @@ function VideoTab() {
         <Button variant="primary" disabled={busy || !file || running} onClick={submit}>
           {running ? "处理中…" : busy ? "上传中…" : "开始拆帧"}
         </Button>
-      </div>
-      <div className="toolbox-stage">
+      </ToolControls>
+      <ToolStage>
         {!job ? (
-          <Empty title="上传视频，本地生成序列帧表">
-            后端用 FFmpeg 按设定帧率抽帧，自动抠图、裁切、对齐成 Sprite Sheet，
-            并输出与原项目一致的索引 JSON。任务在本机排队处理。
+          <Empty title="选择一段视频开始拆帧">
+            按设定帧率提取画面，在本机生成序列帧表，可下载 PNG 或含索引的 ZIP。
           </Empty>
         ) : running ? (
           <div className="toolbox-progress">
@@ -991,9 +1046,7 @@ function VideoTab() {
             <p className="toolbox-hint">
               共 {job.result?.frame_count} 帧 · 表尺寸 {job.result?.width} × {job.result?.height}
             </p>
-            <figure className="toolbox-preview checker">
-              <img src={`/api/video/jobs/${job.id}/result?format=png`} alt="Sprite Sheet" />
-            </figure>
+            <Preview src={`/api/video/jobs/${job.id}/result?format=png`} alt="序列帧表" />
             <div className="toolbox-row">
               <a className="btn primary" href={`/api/video/jobs/${job.id}/result?format=png`} download="sprite.png">
                 下载序列帧表
@@ -1007,43 +1060,97 @@ function VideoTab() {
             </div>
           </div>
         )}
-      </div>
+      </ToolStage>
     </div>
   );
 }
 
 /* ---------------- 页面 ---------------- */
 
-type ToolboxTab = "matte" | "gif" | "sprite" | "pixel" | "watermark" | "video";
+type ToolboxTab = "image" | "matte" | "gif" | "sprite" | "pixel" | "watermark" | "video";
 
-const TABS: [ToolboxTab, string, string][] = [
-  ["matte", "色度键抠图", "绿幕蓝幕一键去背"],
-  ["gif", "GIF 工具", "拆帧、合成与拼接"],
-  ["sprite", "精灵图", "序列帧拆分与重组"],
-  ["pixel", "像素化", "块平均像素风格"],
-  ["watermark", "去水印", "清理 Gemini 水印"],
-  ["video", "视频拆帧", "上传视频生成序列帧表"],
+const TABS: {
+  id: ToolboxTab;
+  label: string;
+  description: string;
+  icon: typeof Scissors;
+}[] = [
+  {
+    id: "image",
+    label: "常用处理",
+    description: "裁剪、压缩、调色与批量导出，直接处理本地图片和图库作品。",
+    icon: ImageIcon,
+  },
+  {
+    id: "matte",
+    label: "色度键抠图",
+    description: "去除纯色背景，保留透明主体。",
+    icon: Scissors,
+  },
+  {
+    id: "gif",
+    label: "GIF 工具",
+    description: "拆分动画帧，或将多张图片合成 GIF 与拼接图。",
+    icon: Film,
+  },
+  {
+    id: "sprite",
+    label: "精灵图",
+    description: "拆分序列帧、检查重复帧，再合成精灵图或 GIF。",
+    icon: Grid2x2,
+  },
+  {
+    id: "pixel",
+    label: "像素化",
+    description: "调整像素块大小，实时查看画面变化。",
+    icon: WandSparkles,
+  },
+  {
+    id: "watermark",
+    label: "去水印",
+    description: "修复 Gemini 生成图右下角的星形水印。",
+    icon: Eraser,
+  },
+  {
+    id: "video",
+    label: "视频拆帧",
+    description: "将视频片段转为序列帧表，可同时抠图与裁切。",
+    icon: Clapperboard,
+  },
 ];
 
 export default function ToolboxPage() {
-  const [tab, setTab] = useState<ToolboxTab>("matte");
+  const [tab, setTab] = useState<ToolboxTab>("image");
+  const toolboxRequest = useStore((state) => state.toolboxRequest);
+  useEffect(() => {
+    if (toolboxRequest) setTab("image");
+  }, [toolboxRequest]);
+  const activeTool = TABS.find((item) => item.id === tab)!;
   return (
-    <div className="toolbox">
-      <header className="toolbox-head">
-        <h1>图像工具箱</h1>
-        <p>从像素处理工具集移植的本地处理管线，全部在你的浏览器里完成。</p>
-      </header>
-      <div className="toolbox-tabs">
-        {TABS.map(([id, label, hint]) => (
+    <div className="page-padding toolbox">
+      <PageHeading
+        title="图像工具箱"
+        description={activeTool.description}
+      >
+        <span className="pill">{tab === "video" || tab === "image" ? "本机处理" : "浏览器处理"}</span>
+      </PageHeading>
+      <nav className="toolbox-tabs" aria-label="图像处理工具">
+        {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             className={tab === id ? "active" : ""}
+            aria-pressed={tab === id}
             onClick={() => setTab(id)}
           >
-            <strong>{label}</strong>
-            <small>{hint}</small>
+            <Icon size={17} aria-hidden="true" />
+            <span>{label}</span>
           </button>
         ))}
+      </nav>
+      <div hidden={tab !== "image"}>
+        <Suspense fallback={<p className="toolbox-hint"><Busy /> 正在准备图片工具…</p>}>
+          <ImageToolsPanel />
+        </Suspense>
       </div>
       {tab === "matte" && <MatteTab />}
       {tab === "gif" && <GifTab />}

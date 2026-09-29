@@ -1,0 +1,307 @@
+.image-tools-panel {
+  min-width: 0;
+}
+.image-tools-modes {
+  width: 100%;
+}
+.image-tools-sources {
+  margin-bottom: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.image-tools-source-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.image-tools-source-heading > strong {
+  margin-right: auto;
+  font-size: 13px;
+  font-weight: 500;
+}
+.image-tools-source-heading .toolbox-file {
+  width: auto;
+  min-height: 35px;
+  margin: 0;
+}
+.image-tools-source-list {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 14px 2px 4px;
+}
+.image-tools-source-item {
+  position: relative;
+  flex: 0 0 180px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+}
+.image-tools-source-item.active {
+  border-color: var(--clay);
+  background: #f7ece6;
+}
+.image-tools-source-select {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 24px 10px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: 12px;
+}
+.image-tools-source-select img {
+  grid-row: 1 / 3;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex: none;
+  border-radius: 4px;
+  background: #e9e5dc;
+}
+.image-tools-source-select span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.image-tools-source-select small {
+  grid-column: 2;
+  color: #857866;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.image-tools-source-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 24px;
+  height: 24px;
+}
+.image-tools-hint {
+  margin: 10px 0 0;
+  color: #857866;
+  font-size: 12px;
+}
+.image-tools-options {
+  min-width: 0;
+  margin: 0;
+  padding: 8px 0 0;
+  border: 0;
+}
+.image-tools-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 16px;
+  color: #625b50;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.image-tools-cropper {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.image-tools-cropper cropper-canvas {
+  display: block;
+  width: 100%;
+  height: 320px;
+  --theme-color: #b96549;
+}
+.image-tools-crop-readout {
+  width: 100%;
+  margin: 0;
+  color: #857866;
+  font-size: 12px;
+}
+.image-tools-progress {
+  width: 100%;
+  color: #857866;
+  font-size: 12px;
+}
+.image-tools-progress progress {
+  width: 100%;
+  height: 7px;
+  accent-color: var(--clay);
+}
+.image-tools-progress small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.image-tools-panel .toolbox-stage > :not(.toolbox-panel-title) + * {
+  margin-top: 16px;
+}
+.image-tools-result-list {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+}
+.image-tools-result-tab {
+  flex: none;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: #625b50;
+  font-size: 12px;
+}
+.image-tools-result-tab.active {
+  border-color: var(--clay);
+  color: var(--clay-dark);
+  background: #f7ece6;
+}
+.image-tools-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+.image-tools-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  width: 100%;
+  color: #857866;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.image-tools-stale {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f5ecdc;
+  color: #8b663c;
+  font-size: 12px;
+}
+.image-tools-errors {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: #f4e4dc;
+  color: #a6493d;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.image-tools-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+  max-height: 55vh;
+  overflow-y: auto;
+  margin: 16px 0;
+  padding: 3px;
+}
+.image-tools-gallery-item {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel);
+  color: #625b50;
+  text-align: left;
+}
+.image-tools-gallery-item.active {
+  border-color: var(--clay);
+  background: #f7ece6;
+}
+.image-tools-gallery-item img {
+  display: block;
+  width: 100%;
+  height: 100px;
+  margin-bottom: 8px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #ece7dd;
+}
+.image-tools-gallery-item span,
+.image-tools-gallery-item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.image-tools-palette {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+.image-tools-palette button {
+  overflow: hidden;
+  padding: 0 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: #625b50;
+  font-size: 12px;
+}
+.image-tools-swatch {
+  display: block;
+  height: 64px;
+  margin-bottom: 8px;
+}
+.image-tools-palette strong,
+.image-tools-palette small {
+  display: block;
+}
+.image-tools-metadata {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+  gap: 12px 20px;
+  width: 100%;
+  margin: 0;
+  font-size: 13px;
+}
+.image-tools-metadata dt {
+  color: #857866;
+}
+.image-tools-metadata dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .image-tools-sources {
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .image-tools-source-heading > strong {
+    flex-basis: 100%;
+  }
+  .image-tools-source-heading .btn {
+    min-height: 40px;
+  }
+  .image-tools-comparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .image-tools-cropper cropper-canvas {
+    height: 280px;
+  }
+  .image-tools-result-tab {
+    min-height: 40px;
+  }
+}

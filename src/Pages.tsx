@@ -37,6 +37,7 @@ import { useStore } from "./store";
 import { drawingFields, imageParameters } from "../shared/drawing";
 import { api, post, patch, put, downloadJSON, money, time } from "./api";
 import {
+  PageHeading,
   Button,
   Field,
   Modal,
@@ -58,25 +59,6 @@ import type {
   Session,
 } from "../shared/types";
 
-function PageHeading({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="page-heading">
-      <div>
-        <h1>{title}</h1>
-        <p>{description}</p>
-      </div>
-      {children && <div className="row">{children}</div>}
-    </div>
-  );
-}
 const caps: Record<Capability, string> = {
   text2image: "文生图",
   image2image: "图生图",
