@@ -23,6 +23,94 @@ export const nodeImageIds = (node: WorkNode): string[] =>
 export const nodeForImage = (nodes: WorkNode[], id: string) =>
   nodes.find((node) => nodeImageIds(node).includes(id));
 
+const IMAGE_ROW = 340;
+const NODE_GAP = 40;
+function absolutePosition(
+  node: WorkNode,
+  nodes: WorkNode[],
+): { x: number; y: number } {
+  const parent = nodes.find((n) => n.id === node.parentId);
+  const offset = parent ? absolutePosition(parent, nodes) : { x: 0, y: 0 };
+  return { x: node.position.x + offset.x, y: node.position.y + offset.y };
+}
+function nodeSize(node: WorkNode) {
+  const width =
+    node.measured?.width ||
+    node.width ||
+    (typeof node.style?.width === "number" ? node.style.width : 290);
+  const height =
+    node.measured?.height ||
+    node.height ||
+    (typeof node.style?.height === "number" ? node.style.height : 320);
+  // 图片载入前的测量只有操作栏高度，仍需给缩略图预留空间。
+  return {
+    width,
+    height: node.data.kind === "image" ? Math.max(320, height) : height,
+  };
+}
+function freePosition(
+  node: WorkNode,
+  preferred: { x: number; y: number },
+  obstacles: WorkNode[],
+  nodes: WorkNode[],
+) {
+  const ancestors = new Set<string>();
+  let parentId = node.parentId;
+  while (parentId) {
+    ancestors.add(parentId);
+    parentId = nodes.find((n) => n.id === parentId)?.parentId;
+  }
+  const { width, height } = nodeSize(node);
+  const boxes = obstacles
+    .filter((other) => other.id !== node.id && !ancestors.has(other.id))
+    .map((other) => ({
+      ...absolutePosition(other, nodes),
+      ...nodeSize(other),
+    }));
+  let y = preferred.y;
+  while (true) {
+    const collisions = boxes.filter(
+      (box) =>
+        preferred.x < box.x + box.width &&
+        preferred.x + width > box.x &&
+        y < box.y + box.height &&
+        y + height > box.y,
+    );
+    if (!collisions.length) return { x: preferred.x, y };
+    y = Math.max(
+      y + IMAGE_ROW,
+      ...collisions.map((box) => box.y + box.height + NODE_GAP),
+    );
+  }
+}
+
+export function separateOverlappingImages(graph: Graph): Graph {
+  // 编组图片使用容器内的相对坐标，整理时保留其位置与容器边界。
+  const movable = (node: WorkNode) =>
+    node.data.kind === "image" && !node.parentId;
+  const obstacles = graph.nodes.filter((node) => !movable(node));
+  const overlapping: WorkNode[] = [];
+  for (const node of graph.nodes) {
+    if (!movable(node)) continue;
+    const position = freePosition(node, node.position, obstacles, graph.nodes);
+    if (position.y === node.position.y) obstacles.push(node);
+    else overlapping.push(node);
+  }
+  if (!overlapping.length) return graph;
+  const replacements = new Map<string, WorkNode>();
+  // 先保留所有不重叠图片的位置，移动卡片不能再挤走后面的正常图片。
+  for (const node of overlapping) {
+    const position = freePosition(node, node.position, obstacles, graph.nodes);
+    const next = { ...node, position };
+    replacements.set(node.id, next);
+    obstacles.push(next);
+  }
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => replacements.get(node.id) || node),
+  };
+}
+
 export function hiddenAfterRemoving(graph: Graph, removed: Set<string>) {
   const kept = graph.nodes.filter((node) => !removed.has(node.id));
   const deleted = graph.nodes.filter((node) => removed.has(node.id));
@@ -61,14 +149,24 @@ export function reconcileCanvas(
     const key = JSON.stringify([task.batchId, task.prompt]);
     groups.set(key, [...(groups.get(key) || []), task]);
   }
-  const visibleImages = images.filter(
-    (image) =>
-      !current.hiddenImageIds.includes(image.id) &&
-      !current.hiddenTaskIds.includes(image.taskId || ""),
-  );
+  const taskOrder = new Map(ordered.map((task, index) => [task.id, index]));
+  const visibleImages = images
+    .filter(
+      (image) =>
+        !current.hiddenImageIds.includes(image.id) &&
+        !current.hiddenTaskIds.includes(image.taskId || ""),
+    )
+    .sort(
+      (a, b) =>
+        (taskOrder.get(a.taskId || "") ?? ordered.length) -
+          (taskOrder.get(b.taskId || "") ?? ordered.length) ||
+        (a.createdAt || 0) - (b.createdAt || 0) ||
+        a.id.localeCompare(b.id),
+    );
   const replacements = new Map<string, string>();
   const batchNodes: WorkNode[] = [];
   const fresh = new Set<string>();
+  const automatic = new Set<string>();
   for (const items of groups.values()) {
     const taskIds = items.map((t) => t.id);
     const existing = current.nodes.filter(
@@ -118,19 +216,16 @@ export function reconcileCanvas(
         data,
       };
       batchNodes.push(node);
-      if (!anchor) fresh.add(id);
+      if (!anchor) {
+        fresh.add(id);
+        automatic.add(id);
+      }
     }
   }
   const nodes = current.nodes.filter(
     (n) => !replacements.has(n.id) && !batchNodes.some((b) => b.id === n.id),
   );
   nodes.push(...batchNodes);
-  const newImageIds = new Set<string>();
-  const absolutePosition = (node: WorkNode): { x: number; y: number } => {
-    const parent = nodes.find((n) => n.id === node.parentId);
-    const offset = parent ? absolutePosition(parent) : { x: 0, y: 0 };
-    return { x: node.position.x + offset.x, y: node.position.y + offset.y };
-  };
   for (const image of visibleImages) {
     if (nodeForImage(nodes, image.id)) continue;
     const source = batchNodes.find((n) =>
@@ -139,8 +234,8 @@ export function reconcileCanvas(
     const siblings = visibleImages.filter(
       (i) => source && nodeTaskIds(source).includes(i.taskId || ""),
     );
-    const origin = source ? absolutePosition(source) : { x: 270, y: 80 };
-    newImageIds.add(image.id);
+    const origin = source ? absolutePosition(source, nodes) : { x: 270, y: 80 };
+    automatic.add(`image-${image.id}`);
     nodes.push({
       id: `image-${image.id}`,
       type: "work",
@@ -176,41 +271,7 @@ export function reconcileCanvas(
     if (!task?.parentImageId) continue;
     const parent = nodeForImage(nodes, task.parentImageId);
     if (!parent || parent.id === node.id) continue;
-    if (fresh.has(node.id)) {
-      const origin = absolutePosition(parent);
-      const ownGroup = nodes.find((n) => n.id === node.parentId);
-      const offset = ownGroup ? absolutePosition(ownGroup) : { x: 0, y: 0 };
-      const siblings = batchNodes.filter((n) =>
-        tasks.some(
-          (t) =>
-            nodeTaskIds(n).includes(t.id) &&
-            t.parentImageId === task.parentImageId,
-        ),
-      );
-      node.position = {
-        x: origin.x - offset.x + 380,
-        y:
-          origin.y -
-          offset.y +
-          siblings
-            .slice(0, siblings.indexOf(node))
-            .reduce(
-              (height, sibling) =>
-                height + Math.max(1, nodeTaskIds(sibling).length) * 340 + 100,
-              0,
-            ),
-      };
-    }
-    const outputs = visibleImages.filter((i) =>
-      nodeTaskIds(node).includes(i.taskId || ""),
-    );
-    outputs.forEach((image, index) => {
-      const output = nodeForImage(nodes, image.id);
-      if (output && newImageIds.has(image.id)) {
-        const origin = absolutePosition(node);
-        output.position = { x: origin.x + 380, y: origin.y + index * 340 };
-      }
-    });
+    if (fresh.has(node.id) && !node.parentId) automatic.add(node.id);
     edges.push({
       id: `parent-${node.id}`,
       source: parent.id,
@@ -230,6 +291,80 @@ export function reconcileCanvas(
         target: output.id,
       });
   }
+  const placed = nodes.filter((node) => !automatic.has(node.id));
+  const completed = new Set<string>();
+  function place(node: WorkNode) {
+    if (!automatic.has(node.id) || completed.has(node.id)) return;
+    completed.add(node.id);
+    let preferred = absolutePosition(node, nodes);
+    if (node.data.kind === "batch") {
+      const task = ordered.find(
+        (t) => nodeTaskIds(node).includes(t.id) && t.parentImageId,
+      );
+      const parent =
+        task?.parentImageId && nodeForImage(nodes, task.parentImageId);
+      if (parent) {
+        place(parent);
+        const origin = absolutePosition(parent, nodes);
+        const siblings = batchNodes.filter((sibling) =>
+          ordered.some(
+            (t) =>
+              nodeTaskIds(sibling).includes(t.id) &&
+              t.parentImageId === task.parentImageId,
+          ),
+        );
+        preferred = {
+          x: origin.x + 380,
+          y:
+            origin.y +
+            siblings
+              .slice(0, siblings.indexOf(node))
+              .reduce(
+                (height, sibling) =>
+                  height +
+                  Math.max(1, nodeTaskIds(sibling).length) * IMAGE_ROW +
+                  100,
+                0,
+              ),
+        };
+      }
+    } else if (node.data.kind === "image") {
+      const image = visibleImages.find(
+        (image) => image.id === node.data.imageId,
+      )!;
+      const source = batchNodes.find((batch) =>
+        nodeTaskIds(batch).includes(image.taskId || ""),
+      );
+      if (source) {
+        place(source);
+        const origin = absolutePosition(source, nodes);
+        const taskIds = nodeTaskIds(source);
+        // 还没完成的任务也占一行，返回顺序不会让后到图片抢已有位置。
+        const row =
+          taskIds
+            .slice(0, taskIds.indexOf(image.taskId!))
+            .reduce(
+              (count, id) =>
+                count +
+                Math.max(
+                  1,
+                  visibleImages.filter((item) => item.taskId === id).length,
+                ),
+              0,
+            ) +
+          visibleImages
+            .filter((item) => item.taskId === image.taskId)
+            .indexOf(image);
+        preferred = { x: origin.x + 380, y: origin.y + row * IMAGE_ROW };
+      }
+    }
+    const position = freePosition(node, preferred, placed, nodes);
+    const parent = nodes.find((n) => n.id === node.parentId);
+    const offset = parent ? absolutePosition(parent, nodes) : { x: 0, y: 0 };
+    node.position = { x: position.x - offset.x, y: position.y - offset.y };
+    placed.push(node);
+  }
+  for (const node of nodes) place(node);
   // 父容器在前，其次提示词，再到独立图片；保证首次拆分与刷新顺序稳定。
   const rank = (node: WorkNode) =>
     node.type === "group" ? 0 : node.data.kind === "batch" ? 1 : 2;

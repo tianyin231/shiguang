@@ -1,8 +1,20 @@
 import { create } from "zustand";
 import type { Config, Snapshot, ImageAsset, Task } from "../shared/types";
 import { api } from "./api";
+import {
+  configureProviderKeys,
+  migrateLegacyProviderKeys,
+  syncBrowserProviderKeys,
+} from "./provider-keys";
 export type Page =
-  "canvas" | "gallery" | "toolbox" | "models" | "tasks" | "costs" | "memory" | "settings";
+  | "canvas"
+  | "gallery"
+  | "toolbox"
+  | "models"
+  | "tasks"
+  | "costs"
+  | "memory"
+  | "settings";
 interface Store {
   config: Config | null;
   data: Snapshot;
@@ -25,6 +37,10 @@ interface Store {
   canvasFocusId: string;
   toolboxImageIds: string[];
   toolboxRequest: number;
+  providerKeyRevision: number;
+  keyMigration: "idle" | "migrating" | "complete" | "failed";
+  keyMigrationError: string;
+  keySyncError: string;
   flushCanvas?: () => Promise<void>;
   set: (value: Partial<Store>) => void;
   setPrompt: (value: string) => void;
@@ -34,6 +50,9 @@ interface Store {
   beginToolEdit: (images: ImageAsset[]) => void;
   refresh: () => Promise<void>;
   boot: () => Promise<void>;
+  migrateKeys: () => Promise<void>;
+  syncKeys: () => Promise<void>;
+  keysChanged: () => void;
   toast: (message: string) => void;
 }
 export const useStore = create<Store>((set, get) => ({
@@ -65,6 +84,10 @@ export const useStore = create<Store>((set, get) => ({
   canvasFocusId: "",
   toolboxImageIds: [],
   toolboxRequest: 0,
+  providerKeyRevision: 0,
+  keyMigration: "idle",
+  keyMigrationError: "",
+  keySyncError: "",
   setPrompt: (value) => {
     const current = get();
     if (current.reference)
@@ -141,6 +164,7 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
   set: (value) => {
+    if (value.config) configureProviderKeys(value.config);
     const current = get();
     const navigating =
       (value.page !== undefined && value.page !== current.page) ||
@@ -174,11 +198,48 @@ export const useStore = create<Store>((set, get) => ({
       const config = await api<Config>("/config");
       if (config.deviceToken)
         localStorage.setItem("workbench-token", config.deviceToken);
+      configureProviderKeys(config);
       set({ config });
+      await get().migrateKeys();
+      await get().syncKeys();
       await get().refresh();
       set({ loading: false, error: "" });
     } catch (e) {
       set({ loading: false, error: (e as Error).message });
+    }
+  },
+  keysChanged: () =>
+    set({ providerKeyRevision: get().providerKeyRevision + 1 }),
+  syncKeys: async () => {
+    try {
+      await syncBrowserProviderKeys();
+      set({ keySyncError: "" });
+    } catch (error) {
+      set({ keySyncError: (error as Error).message });
+    }
+  },
+  migrateKeys: async () => {
+    if (get().keyMigration === "migrating") return;
+    const config = get().config;
+    if (!config?.providers.some((provider) => provider.legacyKeyAvailable))
+      return;
+    set({ keyMigration: "migrating", keyMigrationError: "" });
+    try {
+      await migrateLegacyProviderKeys();
+      const updated = await api<Config>("/config");
+      configureProviderKeys(updated);
+      set({
+        config: updated,
+        keyMigration: "complete",
+        providerKeyRevision: get().providerKeyRevision + 1,
+      });
+      await get().syncKeys();
+    } catch (error) {
+      set({
+        keyMigration: "failed",
+        keyMigrationError: (error as Error).message,
+        providerKeyRevision: get().providerKeyRevision + 1,
+      });
     }
   },
   toast: (message) => {

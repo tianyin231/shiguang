@@ -1,0 +1,69 @@
+.provider-key-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin: 0 0 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--clay);
+  border-radius: 8px;
+  background: var(--panel);
+  color: #625b50;
+}
+.provider-key-notice > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--clay);
+}
+.provider-key-notice strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.provider-key-notice p {
+  margin: 7px 0 0;
+  max-width: 78ch;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.provider-key-success {
+  color: #596f4a;
+}
+.provider-key-problem {
+  margin-top: 10px;
+  color: #9f4c36;
+}
+.provider-key-problem .btn {
+  margin-top: 8px;
+}
+.provider-key-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #f6e9df;
+  color: #8f4f38;
+  font-size: 12px;
+}
+.provider-item {
+  flex-wrap: wrap;
+}
+.provider-item > div:nth-child(2) {
+  min-width: 0;
+}
+.provider-item small {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .provider-key-notice {
+    padding: 15px;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .provider-key-banner {
+    padding: 10px 16px;
+    flex-wrap: wrap;
+  }
+}

@@ -122,6 +122,17 @@ export function defaultModel(
     },
   };
 }
+async function upstreamJSON(response: { json(): Promise<unknown> }) {
+  try {
+    return await response.json();
+  } catch {
+    // JSON 解析器会把响应正文片段放进 SyntaxError，不能持久化或转发它。
+    throw new ApiError(
+      502,
+      "供应商返回了无效的 JSON 响应，请检查接口地址和模型设置",
+    );
+  }
+}
 export async function discover(
   p: Provider,
   signal: AbortSignal,
@@ -135,7 +146,7 @@ export async function discover(
         encodeURIComponent(next)
       : "";
     const res = await upstream(p, "/models" + suffix, { signal });
-    const json = (await res.json()) as {
+    const json = (await upstreamJSON(res)) as {
       data?: { id: string }[];
       models?: { name: string }[];
       nextPageToken?: string;
@@ -270,7 +281,7 @@ export async function chat(
     contentType: "application/json",
     signal,
   });
-  const json = (await res.json()) as any;
+  const json = (await upstreamJSON(res)) as any;
   return {
     text:
       p.adapter === "gemini"
@@ -422,7 +433,7 @@ export async function generate(
     signal,
     idempotencyKey: taskId,
   });
-  const json = (await res.json()) as any;
+  const json = (await upstreamJSON(res)) as any;
   const buffers: Buffer[] = [];
   if (p.adapter === "gemini") {
     for (const part of json.candidates?.[0]?.content?.parts || []) {

@@ -52,6 +52,17 @@ import { injectMemory } from "./memory";
 import { registerVideoRoutes } from "./video";
 import { registerImageToolRoutes } from "./image-tools";
 import {
+  cacheProviderKey,
+  clearProviderKeys,
+  getProviderKey,
+  hasPendingLegacyCleanup,
+  providerWithKey,
+  redactProviderKeys,
+  registerProviderKeyRoutes,
+  requiresProviderKey,
+  sameProviderEndpoint,
+} from "./provider-keys";
+import {
   generationSchema,
   providerSchema,
   modelPatchSchema,
@@ -81,9 +92,15 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 const id = (req: Request, key = "id") => String(req.params[key]);
-const safeProvider = (p: Provider) => {
+const safeProvider = (p: Provider, cleanupPending = false) => {
   const { apiKey, ...value } = p;
-  return { ...value, keyHint: apiKey ? "••••" + apiKey.slice(-4) : "" };
+  return {
+    ...value,
+    requiresKey: requiresProviderKey(p),
+    legacyKeyAvailable:
+      Boolean(apiKey) || (cleanupPending && requiresProviderKey(p)),
+    keyHint: "",
+  };
 };
 const cookieOptions = {
   httpOnly: true,
@@ -93,8 +110,12 @@ const cookieOptions = {
   path: "/",
 };
 function config(req: Request) {
+  const cleanupPending = hasPendingLegacyCleanup(req.device.id);
   return {
-    providers: all<Provider>("providers", req.device.id).map(safeProvider),
+    deviceId: req.device.id,
+    providers: all<Provider>("providers", req.device.id).map((p) =>
+      safeProvider(p, cleanupPending),
+    ),
     activeProviderId: (
       db
         .prepare("SELECT active_provider_id FROM devices WHERE id=?")
@@ -127,14 +148,14 @@ function createProject(
   put("sessions", deviceId, session, { project_id: project.id });
   return { project, session };
 }
-function provider(req: Request, providerId?: string) {
+function provider(req: Request, providerId?: string, requireKey = true) {
   const value = get<Provider>(
     "providers",
     providerId || req.device.active_provider_id || "",
     req.device.id,
   );
   if (!value) throw new ApiError(400, "请先配置供应商");
-  return value;
+  return providerWithKey(req.device.id, value, requireKey);
 }
 function owned<T>(
   req: Request,
@@ -177,6 +198,7 @@ export function createApp() {
   });
   registerVideoRoutes(app);
   registerImageToolRoutes(app);
+  registerProviderKeyRoutes(app);
   app.get("/api/config", (req, res) =>
     res.json({ ...config(req), deviceToken: req.device.token }),
   );
@@ -190,16 +212,28 @@ export function createApp() {
     const old = input.id
       ? owned<Provider>(req, "providers", input.id)
       : undefined;
+    if (old?.apiKey && !sameProviderEndpoint(old, input))
+      throw new ApiError(
+        409,
+        "请先将旧 Key 保存到浏览器并完成迁移，再修改连接地址或类型",
+      );
+    const { apiKey, ...metadata } = input;
     const value: Provider = {
-      ...input,
+      ...metadata,
       name: input.name || old?.name || new URL(input.baseUrl).hostname,
       id: old?.id || uid(),
-      apiKey: input.apiKey || old?.apiKey || "",
+      requiresKey:
+        input.adapter !== "demo" &&
+        (Boolean(apiKey) || Boolean(old && requiresProviderKey(old))),
       createdAt: old?.createdAt || now(),
       adaptiveLimit: input.concurrency,
       cooldownUntil: 0,
     };
     put("providers", req.device.id, value);
+    if (old && !sameProviderEndpoint(old, value))
+      clearProviderKeys(req.device.id, old.id);
+    if (apiKey && value.adapter !== "demo")
+      cacheProviderKey(req.device.id, value, apiKey);
     const models = all<Model>("models", req.device.id);
     for (const name of new Set(selectedModels || [])) {
       if (!models.some((m) => m.providerId === value.id && m.name === name)) {
@@ -241,6 +275,7 @@ export function createApp() {
     res.json(input);
   });
   app.post("/api/logout", (req, res) => {
+    clearProviderKeys(req.device.id);
     db.prepare("UPDATE devices SET token=? WHERE id=?").run(
       uid() + uid(),
       req.device.id,
@@ -272,12 +307,28 @@ export function createApp() {
     const draft: Provider = {
       ...input,
       id: old?.id || "preview",
-      apiKey: input.apiKey || old?.apiKey || "",
+      apiKey:
+        input.apiKey ||
+        (old && sameProviderEndpoint(old, input)
+          ? getProviderKey(req.device.id, old, true)
+          : "") ||
+        "",
+      requiresKey:
+        input.adapter !== "demo" &&
+        (Boolean(input.apiKey) || Boolean(old && requiresProviderKey(old))),
       createdAt: old?.createdAt || now(),
       adaptiveLimit: input.concurrency,
       cooldownUntil: 0,
     };
-    res.json({ names: await discover(draft, AbortSignal.timeout(30000)) });
+    if (draft.requiresKey && !draft.apiKey)
+      throw new ApiError(409, "请从当前浏览器提供 API Key 后再发现模型");
+    try {
+      res.json({ names: await discover(draft, AbortSignal.timeout(30000)) });
+    } catch (error) {
+      if (draft.apiKey && error instanceof Error)
+        error.message = error.message.split(draft.apiKey).join("[redacted]");
+      throw error;
+    }
   });
   app.post("/api/models/discover", async (req, res) => {
     const p = provider(req, req.body.providerId);
@@ -299,7 +350,7 @@ export function createApp() {
     });
   });
   app.post("/api/models", (req, res) => {
-    const p = provider(req, req.body.providerId);
+    const p = provider(req, req.body.providerId, false);
     const name = z.string().min(1).max(200).parse(req.body.name);
     if (
       all<Model>("models", req.device.id).some(
@@ -1078,7 +1129,12 @@ export function createApp() {
             .map((i) => `${i.path.join(".")}: ${i.message}`)
             .join("; ")
         : error.message;
-    res.status(status).json({ error: message || "服务器错误" });
+    let safeMessage = message || "服务器错误";
+    if (req.device)
+      safeMessage = redactProviderKeys(req.device.id, safeMessage);
+    if (typeof req.body?.apiKey === "string" && req.body.apiKey)
+      safeMessage = safeMessage.split(req.body.apiKey).join("[redacted]");
+    res.status(status).json({ error: safeMessage });
   });
   return app;
 }

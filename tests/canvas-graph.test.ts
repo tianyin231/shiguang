@@ -4,6 +4,7 @@ import {
   reconcileCanvas,
   nodeForImage,
   hiddenAfterRemoving,
+  separateOverlappingImages,
   type Graph,
 } from "../src/canvas-graph";
 import type { Task, ImageAsset } from "../shared/types";
@@ -213,4 +214,214 @@ test("旧集合卡片拆分为提示词与独立图片，子分支从具体原�
   );
   assert.equal(nodeForImage(next.nodes, "c")!.position.x, 1200);
   assert.equal(reconcileCanvas(next, tasks, images), next);
+});
+
+test("逐张回填的倒序图片列表不会覆盖先到图片，缺失任务也预留一行", () => {
+  const tasks = [task("1"), task("2"), task("3")];
+  const last = image("c", "3");
+  const first = reconcileCanvas(empty(), tasks, [last]);
+  assert.deepEqual(nodeForImage(first.nodes, "c")!.position, {
+    x: 440,
+    y: 760,
+  });
+  const second = reconcileCanvas(first, tasks, [image("b", "2"), last]);
+  const final = reconcileCanvas(second, tasks, [
+    last,
+    image("b", "2"),
+    image("a", "1"),
+  ]);
+  assert.deepEqual(
+    ["a", "b", "c"].map((id) => nodeForImage(final.nodes, id)!.position),
+    [
+      { x: 440, y: 80 },
+      { x: 440, y: 420 },
+      { x: 440, y: 760 },
+    ],
+  );
+  assert.equal(nodeForImage(final.nodes, "c"), nodeForImage(first.nodes, "c"));
+  assert.equal(
+    reconcileCanvas(final, tasks, [image("a", "1"), last, image("b", "2")]),
+    final,
+  );
+});
+
+test("任务按时间和 ID 排序，同任务多图按创建时间和 ID 排序", () => {
+  const tasks = [task("b", { createdAt: 2 }), task("a", { createdAt: 2 })];
+  const a1 = { ...image("a1", "a"), createdAt: 1 };
+  const a2 = { ...image("a2", "a"), createdAt: 1 };
+  const a3 = { ...image("a3", "a"), createdAt: 2 };
+  const b = { ...image("b", "b"), createdAt: 0 };
+  const next = reconcileCanvas(empty(), tasks, [b, a3, a2, a1]);
+  assert.deepEqual(
+    ["a1", "a2", "a3", "b"].map(
+      (id) => nodeForImage(next.nodes, id)!.position.y,
+    ),
+    [80, 420, 760, 1100],
+  );
+  const partial = reconcileCanvas(empty(), tasks, [a3]);
+  const completed = reconcileCanvas(partial, tasks, [a1, a2, a3]);
+  const ys = ["a1", "a2", "a3"]
+    .map((id) => nodeForImage(completed.nodes, id)!.position.y)
+    .sort((a, b) => a - b);
+  assert.ok(ys[1] - ys[0] >= 320 && ys[2] - ys[1] >= 320);
+  assert.equal(
+    nodeForImage(completed.nodes, "a3"),
+    nodeForImage(partial.nodes, "a3"),
+  );
+});
+
+test("新图片绕开用户拖动的宽高节点，原节点和手动位置不变", () => {
+  const tasks = [task("1")];
+  const initial = reconcileCanvas(empty(), tasks, []);
+  const obstacle = {
+    id: "wide-note",
+    position: { x: 300, y: 80 },
+    measured: { width: 700, height: 620 },
+    data: { kind: "prompt" },
+  };
+  const current = { ...initial, nodes: [...initial.nodes, obstacle] };
+  const next = reconcileCanvas(current, tasks, [image("a", "1")]);
+  assert.ok(nodeForImage(next.nodes, "a")!.position.y >= 740);
+  assert.equal(
+    next.nodes.find((node) => node.id === obstacle.id),
+    obstacle,
+  );
+  assert.deepEqual(obstacle.position, { x: 300, y: 80 });
+});
+
+test("新分支避开已拖动分支，并以最终父节点位置排列结果", () => {
+  const originalTasks = [
+    task("1"),
+    task("2", { batchId: "branch-1", parentImageId: "a" }),
+  ];
+  const originalImages = [image("a", "1"), image("b", "2")];
+  const initial = reconcileCanvas(empty(), originalTasks, originalImages);
+  const branch = initial.nodes.find((node) =>
+    (node.data.taskIds as string[] | undefined)?.includes("2"),
+  )!;
+  branch.position = { x: 820, y: 520 };
+  branch.measured = { width: 290, height: 500 };
+  const tasks = [
+    ...originalTasks,
+    task("3", { batchId: "branch-2", parentImageId: "a" }),
+  ];
+  const next = reconcileCanvas(initial, tasks, [
+    ...originalImages,
+    image("c", "3"),
+  ]);
+  const added = next.nodes.find((node) =>
+    (node.data.taskIds as string[] | undefined)?.includes("3"),
+  )!;
+  assert.ok(added.position.y >= 1060);
+  assert.deepEqual(nodeForImage(next.nodes, "c")!.position, {
+    x: added.position.x + 380,
+    y: added.position.y,
+  });
+  assert.deepEqual(next.nodes.find((node) => node.id === branch.id)!.position, {
+    x: 820,
+    y: 520,
+  });
+  assert.equal(nodeForImage(next.nodes, "b"), nodeForImage(initial.nodes, "b"));
+});
+
+test("同次恢复的父图若被避碰移动，子分支与结果沿用最终父图位置", () => {
+  const tasks = [
+    task("1"),
+    task("2", { batchId: "branch", parentImageId: "a" }),
+  ];
+  const current = {
+    ...empty(),
+    nodes: [
+      {
+        id: "note",
+        position: { x: 440, y: 80 },
+        data: { kind: "prompt" },
+        measured: { width: 290, height: 700 },
+      },
+    ],
+  };
+  const next = reconcileCanvas(current, tasks, [
+    image("b", "2"),
+    image("a", "1"),
+  ]);
+  const parent = nodeForImage(next.nodes, "a")!;
+  const child = next.nodes.find((node) =>
+    (node.data.taskIds as string[] | undefined)?.includes("2"),
+  )!;
+  assert.ok(parent.position.y >= 820);
+  assert.deepEqual(child.position, {
+    x: parent.position.x + 380,
+    y: parent.position.y,
+  });
+  assert.deepEqual(nodeForImage(next.nodes, "b")!.position, {
+    x: child.position.x + 380,
+    y: child.position.y,
+  });
+});
+
+test("整理只移动重叠图片，保留后面的正常图片并且再次整理无变化", () => {
+  const nodes = [
+    {
+      id: "a",
+      position: { x: 440, y: 80 },
+      data: { kind: "image", imageId: "a" },
+    },
+    {
+      id: "b",
+      position: { x: 440, y: 80 },
+      data: { kind: "image", imageId: "b" },
+    },
+    {
+      id: "c",
+      position: { x: 440, y: 420 },
+      data: { kind: "image", imageId: "c" },
+    },
+  ];
+  const current = { ...empty(), nodes };
+  const next = separateOverlappingImages(current);
+  assert.equal(next.nodes[0], nodes[0]);
+  assert.equal(next.nodes[2], nodes[2]);
+  assert.ok(next.nodes[1].position.y >= 780);
+  assert.deepEqual(current.nodes[1].position, { x: 440, y: 80 });
+  assert.equal(separateOverlappingImages(next), next);
+});
+
+test("整理保留编组内图片与相对坐标，新图会避开分组的实际边界", () => {
+  const current: Graph = {
+    ...empty(),
+    nodes: [
+      {
+        id: "group",
+        type: "group",
+        position: { x: 400, y: 50 },
+        style: { width: 600, height: 900 },
+        data: {},
+      },
+      {
+        id: "inside-a",
+        parentId: "group",
+        extent: "parent",
+        position: { x: 20, y: 20 },
+        data: { kind: "image", imageId: "inside-a" },
+      },
+      {
+        id: "inside-b",
+        parentId: "group",
+        extent: "parent",
+        position: { x: 20, y: 20 },
+        data: { kind: "image", imageId: "inside-b" },
+      },
+    ],
+  };
+  assert.equal(separateOverlappingImages(current), current);
+  const next = reconcileCanvas(current, [task("1")], [image("a", "1")]);
+  assert.ok(nodeForImage(next.nodes, "a")!.position.y >= 990);
+  assert.equal(
+    next.nodes.find((node) => node.id === "inside-a"),
+    current.nodes[1],
+  );
+  assert.equal(
+    next.nodes.find((node) => node.id === "inside-b"),
+    current.nodes[2],
+  );
 });

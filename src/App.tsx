@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useStore, type Page } from "./store";
 import { post, api } from "./api";
+import { browserProviderKeyStatus, PROVIDER_KEY_PREFIX } from "./provider-keys";
 import { Button, Field, Modal, Busy } from "./components";
 import { CanvasPage } from "./CanvasPage";
 import { Composer } from "./Composer";
@@ -74,9 +75,12 @@ export function App() {
         200,
       );
     };
-    source.onopen = () => s.set({ connected: true });
+    source.onopen = () => {
+      s.set({ connected: true });
+      void s.syncKeys();
+    };
     source.onerror = () => s.set({ connected: false });
-    ["task", "images", "models", "ready"].forEach((event) =>
+    ["task", "images", "models", "ready", "provider-keys"].forEach((event) =>
       source.addEventListener(event, refresh),
     );
     return () => {
@@ -84,6 +88,16 @@ export function App() {
       clearTimeout(refreshTimer.current);
     };
   }, [!!s.config]);
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key === null || event.key.startsWith(PROVIDER_KEY_PREFIX)) {
+        s.keysChanged();
+        void s.syncKeys();
+      }
+    };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, []);
   const project = s.data.projects.find((p) => p.id === s.projectId);
   const provider = s.config?.providers.find(
     (p) => p.id === s.config?.activeProviderId,
@@ -108,7 +122,11 @@ export function App() {
     return (
       <div className="boot">
         <Sparkles size={36} />
-        <p>准备好，让想法成为画面。</p>
+        <p>
+          {s.keyMigration === "migrating"
+            ? "正在将已有 Key 迁移到此浏览器…"
+            : "准备好，让想法成为画面。"}
+        </p>
         <Busy />
       </div>
     );
@@ -196,7 +214,12 @@ export function App() {
                 {provider?.adapter === "demo"
                   ? "本地演示 · 不产生费用"
                   : provider
-                    ? "密钥已保存在服务端"
+                    ? browserProviderKeyStatus(s.config?.deviceId, provider)
+                        .status === "saved"
+                      ? "Key 已存于此浏览器"
+                      : provider.requiresKey === false
+                        ? "此连接未设置 Key"
+                        : "请在此浏览器填写 Key"
                     : "添加 Base URL 与 Key"}
               </small>
             </div>
@@ -277,6 +300,22 @@ export function App() {
             </div>
           </div>
         )}
+        {(s.keyMigration === "failed" || s.keySyncError) &&
+          s.page !== "settings" && (
+            <div className="provider-key-banner" role="status">
+              <span>
+                {s.keyMigration === "failed"
+                  ? "个人 Key 迁移未完成，请到连接设置重试。"
+                  : "服务器尚未收到此浏览器的 Key，请到连接设置查看。"}
+              </span>
+              <Button
+                variant="ghost"
+                onClick={() => s.set({ page: "settings" })}
+              >
+                连接设置
+              </Button>
+            </div>
+          )}
         {guideOpen && (
           <WorkflowGuide
             onClose={() => {

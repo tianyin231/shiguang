@@ -1,6 +1,11 @@
 import { parseGIF, decompressFrames } from "gifuct-js";
 // @ts-expect-error gifenc 未提供类型声明
-import { GIFEncoder, quantize, applyPalette } from "gifenc";
+import * as gifenc from "gifenc";
+
+// gifenc 的浏览器 ESM 与 Node CommonJS 入口导出方式不同。
+const { GIFEncoder, quantize, applyPalette } = gifenc.GIFEncoder
+  ? gifenc
+  : gifenc.default;
 
 export interface DecodedGifFrame {
   canvas: HTMLCanvasElement;
@@ -13,22 +18,19 @@ export interface DecodedGif {
   frames: DecodedGifFrame[];
 }
 
-/** GIF 帧按 patch 合成到上一帧上；disposalType 2 表示显示前清空画布 */
+/** 透明 patch 像素不覆盖之前的画面；dispose 在当前帧显示完后处理。 */
 function compositeFrame(
   prevBuf: Uint8ClampedArray<ArrayBuffer>,
   frame: {
     patch: Uint8ClampedArray;
     dims: { top: number; left: number; width: number; height: number };
-    disposalType?: number;
   },
   width: number,
   height: number,
 ): Uint8ClampedArray<ArrayBuffer> {
   const buf = new Uint8ClampedArray(prevBuf);
-  const { patch, dims, disposalType = 1 } = frame;
+  const { patch, dims } = frame;
   const { top, left, width: pw, height: ph } = dims;
-
-  if (disposalType === 2) buf.fill(0);
 
   for (let py = 0; py < ph; py++) {
     for (let px = 0; px < pw; px++) {
@@ -36,23 +38,35 @@ function compositeFrame(
       const a = patch[idx + 3];
       const outY = top + py;
       const outX = left + px;
-      if (outY >= 0 && outY < height && outX >= 0 && outX < width) {
+      if (a !== 0 && outY >= 0 && outY < height && outX >= 0 && outX < width) {
         const outIdx = (outY * width + outX) * 4;
-        if (a === 0) {
-          buf[outIdx] = 0;
-          buf[outIdx + 1] = 0;
-          buf[outIdx + 2] = 0;
-          buf[outIdx + 3] = 0;
-        } else {
-          buf[outIdx] = patch[idx];
-          buf[outIdx + 1] = patch[idx + 1];
-          buf[outIdx + 2] = patch[idx + 2];
-          buf[outIdx + 3] = a;
-        }
+        buf.set(patch.subarray(idx, idx + 4), outIdx);
       }
     }
   }
   return buf;
+}
+
+function fillFrameArea(
+  buffer: Uint8ClampedArray,
+  dims: { top: number; left: number; width: number; height: number },
+  width: number,
+  height: number,
+  color: number[],
+) {
+  for (
+    let y = Math.max(0, dims.top);
+    y < Math.min(height, dims.top + dims.height);
+    y++
+  ) {
+    for (
+      let x = Math.max(0, dims.left);
+      x < Math.min(width, dims.left + dims.width);
+      x++
+    ) {
+      buffer.set(color, (y * width + x) * 4);
+    }
+  }
 }
 
 /** 解码 GIF 为逐帧画布（已按原 GIF 帧延时记录 delayMs） */
@@ -65,9 +79,23 @@ export async function decodeGifToFrames(blob: Blob): Promise<DecodedGif> {
   if (!frames.length) throw new Error("GIF 中没有可用帧");
 
   let prevBuf = new Uint8ClampedArray(width * height * 4);
+  const background = gif.gct?.[gif.lsd.backgroundColorIndex];
+  const backgroundFor = (transparentIndex: number | undefined) =>
+    transparentIndex === undefined && background
+      ? [...background, 255]
+      : [0, 0, 0, 0];
+  fillFrameArea(
+    prevBuf,
+    { top: 0, left: 0, width, height },
+    width,
+    height,
+    backgroundFor(frames[0].transparentIndex),
+  );
   const out: DecodedGifFrame[] = [];
   for (let i = 0; i < frames.length; i++) {
-    prevBuf = compositeFrame(prevBuf, frames[i], width, height);
+    const frame = frames[i];
+    const beforeFrame = prevBuf;
+    prevBuf = compositeFrame(beforeFrame, frame, width, height);
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -76,7 +104,19 @@ export async function decodeGifToFrames(blob: Blob): Promise<DecodedGif> {
     const imgData = ctx.createImageData(width, height);
     imgData.data.set(prevBuf);
     ctx.putImageData(imgData, 0, 0);
-    out.push({ canvas, delayMs: frames[i].delay ?? 100 });
+    out.push({ canvas, delayMs: frame.delay ?? 100 });
+    if (frame.disposalType === 2) {
+      // 只恢复当前 patch 覆盖的区域，不能清掉画面中其它帧留下的内容。
+      fillFrameArea(
+        prevBuf,
+        frame.dims,
+        width,
+        height,
+        backgroundFor(frame.transparentIndex),
+      );
+    } else if (frame.disposalType === 3) {
+      prevBuf = beforeFrame;
+    }
   }
   return { width, height, frames: out };
 }
@@ -89,7 +129,12 @@ function writeCanvasFrame(
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("无法读取画布");
-  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const { data, width, height } = ctx.getImageData(
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
   const palette = quantize(data, 255, {
     format: "rgba4444",
     oneBitAlpha: 128,
@@ -128,7 +173,8 @@ export async function encodeCanvasesToGif(
 ): Promise<Blob> {
   if (canvases.length === 0) throw new Error("没有可编码的帧");
   const gif = GIFEncoder();
-  for (const canvas of canvases) writeCanvasFrame(gif, canvas, Math.max(20, Math.round(delayMs)));
+  for (const canvas of canvases)
+    writeCanvasFrame(gif, canvas, Math.max(20, Math.round(delayMs)));
   gif.finish();
   return new Blob([gif.bytes()], { type: "image/gif" });
 }
@@ -146,7 +192,9 @@ export async function blobToCanvas(blob: Blob): Promise<HTMLCanvasElement> {
   return canvas;
 }
 
-export async function blobsToCanvases(blobs: Blob[]): Promise<HTMLCanvasElement[]> {
+export async function blobsToCanvases(
+  blobs: Blob[],
+): Promise<HTMLCanvasElement[]> {
   const out: HTMLCanvasElement[] = [];
   for (const blob of blobs) out.push(await blobToCanvas(blob));
   return out;
@@ -154,6 +202,9 @@ export async function blobsToCanvases(blobs: Blob[]): Promise<HTMLCanvasElement[
 
 export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("画布导出失败"))), "image/png");
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("画布导出失败"))),
+      "image/png",
+    );
   });
 }

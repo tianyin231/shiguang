@@ -1,7 +1,26 @@
+import { syncBrowserProviderKeys } from "./provider-keys";
+
+function needsProviderKey(url: string, method: string) {
+  const path = url.split("?")[0];
+  if (path.startsWith("/proxy/")) return true;
+  if (method !== "POST") return false;
+  return (
+    path === "/tasks" ||
+    /^\/tasks\/[^/]+\/retry$/.test(path) ||
+    /^\/models\/(preview|discover)$/.test(path) ||
+    /^\/models\/[^/]+\/probe$/.test(path) ||
+    path === "/chat" ||
+    /^\/sessions\/[^/]+\/chat$/.test(path)
+  );
+}
+
 async function request(
   url: string,
   options: RequestInit = {},
 ): Promise<Response> {
+  if (needsProviderKey(url, (options.method || "GET").toUpperCase())) {
+    await syncBrowserProviderKeys();
+  }
   const token = localStorage.getItem("workbench-token");
   const res = await fetch("/api" + url, {
     ...options,
@@ -26,7 +45,8 @@ export async function api<T>(
   url: string,
   options: RequestInit = {},
 ): Promise<T> {
-  return (await request(url, options)).json();
+  const response = await request(url, options);
+  return response.status === 204 ? (undefined as T) : response.json();
 }
 export async function apiBlob(url: string, options: RequestInit = {}) {
   const response = await request(url, options);

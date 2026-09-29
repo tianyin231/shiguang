@@ -8,6 +8,8 @@ export interface Provider {
   name: string;
   baseUrl: string;
   apiKey?: string;
+  requiresKey?: boolean;
+  legacyKeyAvailable?: boolean;
   keyHint?: string;
   adapter: Adapter;
   proxyUrl: string;
@@ -128,6 +130,7 @@ export interface Task {
   modelName: string;
   batchId: string;
   status: Status;
+  waitingForKey?: boolean;
   priority: number;
   attempts: number;
   maxRetries: number;
@@ -181,6 +184,7 @@ export interface ImageAsset {
   thumbnailUrl: string;
 }
 export interface Config {
+  deviceId: string;
   providers: Provider[];
   activeProviderId: string | null;
   settings: Settings;

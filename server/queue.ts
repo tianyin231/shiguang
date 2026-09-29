@@ -13,6 +13,11 @@ import { generate, ApiError } from "./providers";
 import { saveImage, deleteFiles, commitImage } from "./storage";
 import { injectMemory } from "./memory";
 import {
+  getProviderKey,
+  providerWithKey,
+  waitingForProviderKey,
+} from "./provider-keys";
+import {
   drawingFields,
   imageParameters,
   promptWithNegative,
@@ -47,7 +52,16 @@ export function taskList(deviceId: string): Task[] {
         "SELECT data FROM tasks WHERE device_id=? ORDER BY created_at DESC",
       )
       .all(deviceId) as { data: string }[]
-  ).map((r) => JSON.parse(r.data));
+  ).map((r) => {
+    const task: Task = JSON.parse(r.data);
+    const provider = get<Provider>("providers", task.providerId, deviceId);
+    return {
+      ...task,
+      waitingForKey:
+        task.status === "queued" &&
+        Boolean(provider && waitingForProviderKey(deviceId, provider)),
+    };
+  });
 }
 export function taskRow(id: string, deviceId?: string) {
   return db
@@ -317,6 +331,13 @@ export function enqueue(deviceId: string, input: GenerateInput): Task[] {
         JSON.parse(taskRow(id, deviceId)!.data),
       );
     const items = plans(deviceId, input);
+    for (const providerId of new Set(
+      items.map((item) => item.model.providerId),
+    ))
+      providerWithKey(
+        deviceId,
+        get<Provider>("providers", providerId, deviceId)!,
+      );
     const costs = estimate(deviceId, input);
     const config = settings(deviceId);
     if (
@@ -438,6 +459,9 @@ export function retryTask(id: string, deviceId: string) {
     const task: Task = JSON.parse(row.data);
     if (!["dead", "failed", "cancelled"].includes(task.status))
       throw new ApiError(409, "只能重试已结束的失败或取消任务");
+    const provider = get<Provider>("providers", task.providerId, deviceId);
+    if (!provider) throw new ApiError(404, "连接不存在");
+    providerWithKey(deviceId, provider);
     const cap = settings(deviceId).totalBudgets[task.currency];
     if (
       cap !== undefined &&
@@ -489,7 +513,8 @@ export function startWorker() {
       }
       const candidates = db
         .prepare(
-          "SELECT * FROM tasks WHERE status='queued' AND cancel_requested=0 AND available_at<=? ORDER BY priority DESC,created_at LIMIT 128",
+          // 缺 Key 的旧批次可能一直排队，不能挡住后面的可执行任务。
+          "SELECT * FROM tasks WHERE status='queued' AND cancel_requested=0 AND available_at<=? ORDER BY priority DESC,created_at",
         )
         .all(now()) as unknown as TaskRow[];
       for (const row of candidates) {
@@ -497,6 +522,7 @@ export function startWorker() {
         const p = get<Provider>("providers", row.provider_id);
         const model = get<Model>("models", row.model_id);
         if (!p || !model) continue;
+        if (waitingForProviderKey(row.device_id, p)) continue;
         if (p.cooldownUntil > now()) continue;
         const running = db
           .prepare(
@@ -557,7 +583,30 @@ export function startWorker() {
   }
   async function execute(row: TaskRow) {
     let t: Task = JSON.parse(row.data);
-    const p = get<Provider>("providers", row.provider_id)!;
+    let p: Provider;
+    try {
+      const stored = get<Provider>("providers", row.provider_id, row.device_id);
+      if (!stored) throw new ApiError(404, "连接不存在");
+      p = providerWithKey(row.device_id, stored);
+    } catch (error) {
+      const current = taskRow(t.id);
+      if (current?.owner !== owner) return;
+      const waiting = error instanceof ApiError && error.status === 409;
+      t.status = waiting ? "queued" : "failed";
+      if (waiting) {
+        t.attempts = Math.max(0, t.attempts - 1);
+        t.error = undefined;
+        log(t, "等待浏览器重新提供 API Key");
+      } else {
+        t.error = "连接配置不可用";
+        t.reservation = 0;
+      }
+      db.prepare(
+        "UPDATE tasks SET owner=NULL,lease_until=0 WHERE id=? AND owner=?",
+      ).run(t.id, owner);
+      writeTask(t, row.device_id);
+      return;
+    }
     const model = get<Model>("models", row.model_id)!;
     const controller = new AbortController();
     controllers.set(t.id, controller);
@@ -569,6 +618,7 @@ export function startWorker() {
       t.timeout * 1000,
     );
     const heartbeat = setInterval(() => {
+      getProviderKey(row.device_id, p, true);
       const latest = taskRow(t.id);
       if (latest?.owner !== owner) {
         controller.abort(new Error("任务租约已转移"));
@@ -661,7 +711,9 @@ export function startWorker() {
         const status = error instanceof ApiError ? error.status : 0;
         t.uncertainCharge = upstreamCompleted || status === 0 || status >= 500;
         t.elapsedMs = now() - begin;
-        t.error = e.message || "网络请求失败";
+        t.error = p.apiKey
+          ? (e.message || "网络请求失败").split(p.apiKey).join("[redacted]")
+          : e.message || "网络请求失败";
         if (t.uncertainCharge && t.actualCost !== null)
           t.reservation = t.actualCost;
         if (cancelled) t.status = "cancelled";

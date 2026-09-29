@@ -1,9 +1,9 @@
-import { mkdir, writeFile, readFile, unlink, access } from "node:fs/promises";
+import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
-import { all, settings, uid, now, put } from "./db";
+import { all, db, settings, uid, now, put, transaction } from "./db";
 import type { ImageAsset, Task } from "../shared/types";
 import { ApiError } from "./providers";
 
@@ -68,15 +68,9 @@ export async function saveImage(
   if (!dest.startsWith(root + path.sep))
     throw new ApiError(400, "文件名模板必须位于输出目录内");
   await mkdir(path.dirname(dest), { recursive: true });
-  let file = dest;
-  const duplicate = existing.find((i) => i.sha === sha);
-  if (duplicate) {
-    try {
-      await access(duplicate.path);
-      file = duplicate.path;
-    } catch {}
-  }
-  if (file === dest) await writeFile(file, png, { flag: "wx" });
+  // 异步保存阶段持有独立文件，避免图库清理删除尚未提交的新图片依赖。
+  // 共享路径去重统一交给 commitImage 的同步事务完成。
+  await writeFile(dest, png, { flag: "wx" });
   const thumbnailPath = path.join(path.dirname(dest), id + ".thumb.webp");
   await sharp(png)
     .resize(480, 480, { fit: "inside", withoutEnlargement: true })
@@ -89,7 +83,7 @@ export async function saveImage(
     sessionId: task.sessionId,
     taskId: task.id,
     parentId: task.parentImageId,
-    path: file,
+    path: dest,
     thumbnailPath,
     sidecarPath,
     sha,
@@ -139,14 +133,25 @@ export function commitImage(deviceId: string, image: ImageAsset) {
   });
 }
 export async function deleteFiles(image: ImageAsset, remaining: ImageAsset[]) {
-  for (const file of [
-    image.sidecarPath,
-    image.thumbnailPath,
-    ...(remaining.some((i) => i.path === image.path) ? [] : [image.path]),
-  ])
+  for (const file of [image.sidecarPath, image.thumbnailPath])
     await unlink(file).catch((e) => {
       if (e.code !== "ENOENT") throw e;
     });
+  if (remaining.some((i) => i.path === image.path)) return;
+  // 删除附属文件期间可能有新图片提交并复用此路径，不能沿用先前的引用快照。
+  transaction(() => {
+    const referenced = db
+      .prepare(
+        "SELECT 1 FROM images WHERE id<>? AND json_extract(data,'$.path')=? LIMIT 1",
+      )
+      .get(image.id, image.path);
+    if (referenced) return;
+    try {
+      unlinkSync(image.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  });
 }
 export async function dataUrl(image: ImageAsset) {
   return (

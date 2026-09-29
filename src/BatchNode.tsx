@@ -18,6 +18,7 @@ export function BatchNode({
     .filter((t) => !!t);
   const done = tasks.filter((t) => t.status === "succeeded").length;
   const pending = tasks.some((t) => ["running", "queued"].includes(t.status));
+  const waitingForKey = tasks.some((t) => t.waitingForKey);
   const failed = tasks.filter((t) => ["failed", "dead"].includes(t.status));
   const costs: Record<string, number> = {};
   for (const task of tasks)
@@ -34,7 +35,8 @@ export function BatchNode({
         <span
           className={`status ${pending ? "running" : failed.length ? "failed" : done ? "succeeded" : "cancelled"}`}
         >
-          {done}/{tasks.length} 张{pending ? " · 生成中" : ""}
+          {done}/{tasks.length} 张
+          {waitingForKey ? " · 等待 Key" : pending ? " · 生成中" : ""}
         </span>
       </div>
       <p className="pre-wrap nowheel">{String(data.prompt || "")}</p>
@@ -62,16 +64,16 @@ export function BatchNode({
             <div key={task.id} className="prompt-task-row">
               <span>
                 第 {index + 1} 张 ·{" "}
-                {
-                  {
-                    queued: "排队中",
-                    running: "生成中",
-                    succeeded: "已完成",
-                    failed: "失败",
-                    dead: "重试耗尽",
-                    cancelled: "已取消",
-                  }[task.status]
-                }
+                {task.waitingForKey
+                  ? "等待浏览器补充 Key"
+                  : {
+                      queued: "排队中",
+                      running: "生成中",
+                      succeeded: "已完成",
+                      failed: "失败",
+                      dead: "重试耗尽",
+                      cancelled: "已取消",
+                    }[task.status]}
               </span>
               {task.error && <small>{task.error}</small>}
               {["failed", "dead", "queued", "running"].includes(

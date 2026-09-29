@@ -37,6 +37,15 @@ import { useStore } from "./store";
 import { drawingFields, imageParameters } from "../shared/drawing";
 import { api, post, patch, put, downloadJSON, money, time } from "./api";
 import {
+  assertBrowserKeyStorage,
+  browserProviderKeyStatus,
+  clearBrowserProviderKey,
+  clearDeviceBrowserProviderKeys,
+  getBrowserProviderKey,
+  saveBrowserProviderKey,
+} from "./provider-keys";
+import "./provider-keys.css";
+import {
   PageHeading,
   Button,
   Field,
@@ -102,12 +111,19 @@ export function SettingsPage() {
   const [modelSearch, setModelSearch] = useState("");
   const currentDiscovery =
     discovery?.form === JSON.stringify(form) ? discovery : null;
+  const localKey = browserProviderKeyStatus(s.config?.deviceId, form);
+  function formKey() {
+    return (
+      form.apiKey.trim() || getBrowserProviderKey(s.config?.deviceId, form)
+    );
+  }
   async function discoverModels() {
     setDiscovery(null);
     setSelectedModels([]);
     const result = await post<{ names: string[] }>("/models/preview", {
       ...form,
       id: form.id || undefined,
+      apiKey: formKey(),
     });
     setDiscovery({ form: JSON.stringify(form), names: result.names });
     setModelSearch("");
@@ -130,21 +146,53 @@ export function SettingsPage() {
     });
   }
   async function save(withModels = false) {
+    const apiKey = formKey();
+    // 先检查浏览器可写；服务器成功返回 ID 后才替换原来的本地 Key。
+    if (apiKey) assertBrowserKeyStorage();
     const config = await post<Config>("/config", {
       ...form,
       id: form.id || undefined,
+      apiKey,
       selectedModels:
         withModels && currentDiscovery ? selectedModels : undefined,
     });
     s.set({ config });
-    if (config.deviceToken)
-      localStorage.setItem("workbench-token", config.deviceToken);
+    const savedProvider = config.providers.find(
+      (provider) => provider.id === config.activeProviderId,
+    );
+    // 即使浏览器持久保存失败，也保留输入与新 ID，重试不会重复创建连接。
+    setForm({ ...form, id: savedProvider?.id || form.id, apiKey });
+    if (!savedProvider)
+      throw new Error("连接已保存，但未找到返回的供应商，请刷新后重试。");
+    try {
+      if (apiKey)
+        saveBrowserProviderKey(config.deviceId, savedProvider, apiKey);
+    } catch (error) {
+      s.keysChanged();
+      throw new Error(`连接已保存，但 ${(error as Error).message}`);
+    }
+    s.keysChanged();
+    await s.syncKeys();
     s.toast(
-      withModels ? "连接与勾选的模型已保存" : "连接已保存，可稍后添加模型",
+      apiKey
+        ? "连接已保存，Key 已存于此浏览器"
+        : withModels
+          ? "连接与勾选的模型已保存"
+          : "连接已保存，可稍后填写 Key 或添加模型",
     );
     setDiscovery(null);
     await s.refresh();
-    setForm({ ...form, id: config.activeProviderId || "", apiKey: "" });
+    setForm({ ...form, id: savedProvider.id, apiKey: "" });
+  }
+  async function clearKey(provider: Provider) {
+    if (!s.config?.deviceId) return;
+    try {
+      await clearBrowserProviderKey(s.config.deviceId, provider.id);
+      if (form.id === provider.id) setForm({ ...form, apiKey: "" });
+      s.toast("此浏览器的 Key 与服务器临时缓存已清除");
+    } finally {
+      s.keysChanged();
+    }
   }
   return (
     <div className="page-padding">
@@ -152,6 +200,52 @@ export function SettingsPage() {
         title="连接与偏好"
         description="模型由你选择，作品留在自己的目录。"
       />
+      <section className="provider-key-notice" aria-label="个人 Key 保存方式">
+        <KeyRound size={20} aria-hidden="true" />
+        <div>
+          <strong>Key 只保存在此浏览器</strong>
+          <p>
+            发现模型、生成图片和对话时，Key
+            会发送到当前服务器，由服务器转发给供应商。服务器仅在内存中临时使用，不持久保存。
+          </p>
+          <p>
+            清除网站数据或更换浏览器后需重新填写。关闭页面后，当前服务器进程仍可继续后台任务；服务器重启后，需要打开此浏览器补充
+            Key。
+          </p>
+          {s.keyMigration === "migrating" && (
+            <p role="status">
+              <Busy /> 正在将已有 Key 迁移到此浏览器…
+            </p>
+          )}
+          {s.keyMigration === "complete" && (
+            <p className="provider-key-success" role="status">
+              已有 Key 已保存到此浏览器，对应的服务器旧存储已删除。
+            </p>
+          )}
+          {s.keyMigration === "failed" && (
+            <div className="provider-key-problem" role="alert">
+              <p>Key 迁移未完成：{s.keyMigrationError}</p>
+              <Button
+                disabled={action.busy}
+                onClick={() => void action.run(s.migrateKeys)}
+              >
+                重试迁移
+              </Button>
+            </div>
+          )}
+          {s.keySyncError && (
+            <div className="provider-key-problem" role="alert">
+              <p>服务器临时 Key 尚未同步：{s.keySyncError}</p>
+              <Button
+                disabled={action.busy}
+                onClick={() => void action.run(s.syncKeys)}
+              >
+                重试同步
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
       <div className="settings-layout">
         <section className="surface">
           <div className="section-heading">
@@ -186,12 +280,24 @@ export function SettingsPage() {
                 <div>
                   <strong>{p.name}</strong>
                   <small>
-                    {p.adapter} · {p.keyHint || "无需密钥"}
+                    {p.adapter} ·{" "}
+                    {p.adapter === "demo"
+                      ? "本地演示"
+                      : browserProviderKeyStatus(s.config?.deviceId, p).hint}
                   </small>
                 </div>
                 <Button variant="ghost" onClick={() => edit(p)}>
                   编辑
                 </Button>
+                {p.adapter !== "demo" && (
+                  <Button
+                    variant="ghost"
+                    disabled={action.busy}
+                    onClick={() => void action.run(() => clearKey(p))}
+                  >
+                    清除 Key
+                  </Button>
+                )}
                 <Button
                   variant={
                     p.id === s.config?.activeProviderId ? "ghost" : "secondary"
@@ -264,9 +370,11 @@ export function SettingsPage() {
             <Field
               label="API Key"
               hint={
-                form.id
-                  ? "留空保留已保存的 Key。"
-                  : "Key 保存到服务端；刷新和重开浏览器无需重新填写。"
+                localKey.status === "saved"
+                  ? "留空使用此浏览器为当前地址保存的 Key。更改地址或接口类型后需重新填写。"
+                  : localKey.status === "different-endpoint"
+                    ? "接口地址或类型已改变，旧 Key 不会用于新接口，请重新填写。"
+                    : "Key 保存到此浏览器。发现模型或调用时，会发给服务器临时转发。"
               }
             >
               <input
@@ -274,7 +382,11 @@ export function SettingsPage() {
                 autoComplete="off"
                 value={form.apiKey}
                 onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-                placeholder={form.id ? "已保存，留空不修改" : "sk-…"}
+                placeholder={
+                  localKey.status === "saved"
+                    ? "此浏览器已保存，留空保留"
+                    : "填写此接口的个人 Key"
+                }
               />
             </Field>
             <div className="field-grid">
@@ -525,6 +637,10 @@ export function SettingsPage() {
                 variant="ghost"
                 onClick={() =>
                   action.run(async () => {
+                    if (s.config?.deviceId) {
+                      await clearDeviceBrowserProviderKeys(s.config.deviceId);
+                      s.keysChanged();
+                    }
                     await post("/logout");
                     localStorage.removeItem("workbench-token");
                     localStorage.removeItem("workbench-project");
@@ -533,7 +649,7 @@ export function SettingsPage() {
                 }
               >
                 <LogOut size={14} />
-                退出并清除设备凭证
+                退出并清除此浏览器的 Key
               </Button>
             </div>
           </section>
@@ -1069,7 +1185,7 @@ export function TasksPage() {
     <div className="page-padding">
       <PageHeading
         title="让灵感并行发生"
-        description="每次生成都有记录。关闭页面不会停止后台任务。"
+        description="服务器进程持续运行时，关闭页面也会继续任务；服务器重启后需由此浏览器补充 Key。"
       >
         <Button onClick={() => action.run(s.refresh)}>
           <RefreshCw size={15} />
@@ -1137,7 +1253,9 @@ export function TasksPage() {
                   <div>
                     <strong>{t.modelName}</strong>
                     <span className={`status ${t.status}`}>
-                      {labels[t.status]}
+                      {t.waitingForKey
+                        ? "等待浏览器补充 Key"
+                        : labels[t.status]}
                     </span>
                     <small>{time(t.createdAt)}</small>
                   </div>
@@ -1162,6 +1280,11 @@ export function TasksPage() {
                   </small>
                 </div>
                 <div className="task-buttons">
+                  {t.waitingForKey && (
+                    <Button onClick={() => s.set({ page: "settings" })}>
+                      补充 Key
+                    </Button>
+                  )}
                   {["queued", "running"].includes(t.status) ? (
                     <Button
                       variant="ghost"

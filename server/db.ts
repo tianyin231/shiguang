@@ -8,9 +8,10 @@ import type { Settings } from "../shared/types";
 export const dataDir = path.resolve(process.env.DATA_DIR || "./data");
 mkdirSync(dataDir, { recursive: true });
 export const db = new DatabaseSync(path.join(dataDir, "workbench.sqlite"));
-db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
+db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;
 CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY,token TEXT UNIQUE NOT NULL,active_provider_id TEXT,settings TEXT NOT NULL,last_seen INTEGER);
 CREATE TABLE IF NOT EXISTS providers(id TEXT PRIMARY KEY,device_id TEXT NOT NULL REFERENCES devices(id),data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS provider_key_cleanup(device_id TEXT PRIMARY KEY REFERENCES devices(id));
 CREATE TABLE IF NOT EXISTS models(id TEXT PRIMARY KEY,device_id TEXT NOT NULL REFERENCES devices(id),provider_id TEXT NOT NULL REFERENCES providers(id),data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,device_id TEXT NOT NULL REFERENCES devices(id),data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,device_id TEXT NOT NULL REFERENCES devices(id),project_id TEXT NOT NULL REFERENCES projects(id),data TEXT NOT NULL);
@@ -62,6 +63,31 @@ export function put(
   value: { id: string },
   extra: Record<string, string | number> = {},
 ) {
+  if (table === "providers") {
+    const incoming = value as import("../shared/types").Provider;
+    const previous = get<import("../shared/types").Provider>(
+      table,
+      value.id,
+      deviceId,
+    );
+    const {
+      apiKey,
+      keyHint: _hint,
+      legacyKeyAvailable: _legacyFlag,
+      ...metadata
+    } = incoming;
+    value = {
+      ...metadata,
+      requiresKey:
+        incoming.adapter !== "demo" &&
+        (incoming.requiresKey === true ||
+          Boolean(apiKey) ||
+          previous?.requiresKey === true ||
+          Boolean(previous?.apiKey)),
+      // 仅保留既存旧值，绝不写入本次请求或 worker 副本携带的新凭证。
+      ...(previous?.apiKey ? { apiKey: previous.apiKey } : {}),
+    } as typeof value;
+  }
   const keys = ["id", "device_id", ...Object.keys(extra), "data"];
   const vals = [
     value.id,

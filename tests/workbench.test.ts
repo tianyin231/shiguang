@@ -219,7 +219,7 @@ async function waitTask(
 
 test("端到端持久化工作台", async (t) => {
   await t.test(
-    "发现草稿不保存，仅加入勾选模型，支持直接保存和保留密钥",
+    "发现草稿不保存，仅加入勾选模型，空密钥可复用内存凭证",
     async () => {
       const previewClient = supertest.agent(app);
       await previewClient.get("/api/config").expect(200);
@@ -278,7 +278,7 @@ test("端到端持久化工作台", async (t) => {
       );
     },
   );
-  await t.test("设备凭证、密钥持久化、多供应商和本地网关", async () => {
+  await t.test("设备凭证、多供应商配置持久化，API Key 仅留内存", async () => {
     const initial = await client.get("/api/config").expect(200);
     token = initial.body.deviceToken;
     assert.ok(token);
@@ -298,6 +298,16 @@ test("端到端持久化工作台", async (t) => {
       .expect(200);
     providerId = first.body.activeProviderId;
     assert.ok(!JSON.stringify(first.body).includes('"apiKey"'));
+    assert.equal(first.body.deviceId, deviceId);
+    const storedProvider = JSON.parse(
+      (
+        db.prepare("SELECT data FROM providers WHERE id=?").get(providerId) as {
+          data: string;
+        }
+      ).data,
+    );
+    assert.equal(storedProvider.apiKey, undefined);
+    assert.ok(!JSON.stringify(storedProvider).includes("test-key"));
     const restore = await supertest(app)
       .get("/api/config")
       .set("Authorization", "Bearer " + token)

@@ -42,6 +42,7 @@ import {
   Minus,
   ChevronDown,
   LocateFixed,
+  LayoutGrid,
 } from "lucide-react";
 import { useStore } from "./store";
 import { api, post, put, downloadJSON, money } from "./api";
@@ -65,6 +66,7 @@ import {
   nodeImageIds,
   nodeTaskIds,
   hiddenAfterRemoving,
+  separateOverlappingImages,
   type WorkNode,
   type Graph,
 } from "./canvas-graph";
@@ -330,27 +332,26 @@ function CanvasInner() {
       savePromise.current = null;
     }
   }, []);
+  const flushCanvas = useCallback(async () => {
+    await persist();
+    if (pendingSave.current) throw new Error("画布尚未保存，请重试后再继续");
+  }, [persist]);
   useEffect(() => {
     if (!dirty) return;
     const timer = setTimeout(() => void persist(), 700);
     return () => clearTimeout(timer);
   }, [dirty, persist]);
   useEffect(() => {
-    const flush = async () => {
-      await persist();
-      if (pendingSave.current)
-        throw new Error("画布尚未保存，请重试后再切换页面");
-    };
-    useStore.getState().set({ flushCanvas: flush });
+    useStore.getState().set({ flushCanvas });
     const onHide = () => void persist();
     window.addEventListener("pagehide", onHide);
     return () => {
       window.removeEventListener("pagehide", onHide);
-      if (useStore.getState().flushCanvas === flush)
+      if (useStore.getState().flushCanvas === flushCanvas)
         useStore.getState().set({ flushCanvas: undefined });
       void persist();
     };
-  }, [persist]);
+  }, [persist, flushCanvas]);
   useEffect(() => {
     const target =
       graph.nodes.find((n) => n.id === s.canvasFocusId) ||
@@ -674,6 +675,27 @@ function CanvasInner() {
               <hr />
               <button
                 disabled={
+                  !graph.nodes.some(
+                    (n) => n.data.kind === "image" && !n.parentId,
+                  )
+                }
+                title="仅移开重叠的未编组图片，保留其余节点位置；可撤销"
+                onClick={() => {
+                  const next = separateOverlappingImages(graphRef.current);
+                  if (next === graphRef.current) {
+                    s.toast("未编组图片没有重叠，无需整理");
+                    return;
+                  }
+                  checkpoint();
+                  change(next);
+                  s.toast("已移开重叠图片，可撤销；编组内图片保留原位");
+                }}
+              >
+                <LayoutGrid size={15} />
+                整理重叠图片
+              </button>
+              <button
+                disabled={
                   !selectedNodes.some((n) => !n.parentId && n.type !== "group")
                 }
                 onClick={group}
@@ -704,7 +726,7 @@ function CanvasInner() {
                 title="版本历史"
                 onClick={() =>
                   action.run(async () => {
-                    await persist();
+                    await flushCanvas();
                     setVersions(
                       await api("/projects/" + s.projectId + "/versions"),
                     );
@@ -718,7 +740,7 @@ function CanvasInner() {
                 title="导出项目 JSON"
                 onClick={() =>
                   action.run(async () => {
-                    await persist();
+                    await flushCanvas();
                     downloadJSON(
                       (project?.name || "project") + ".json",
                       await api("/projects/" + s.projectId + "/export"),
@@ -1055,7 +1077,7 @@ function CanvasInner() {
           <Button
             onClick={() =>
               action.run(async () => {
-                await persist();
+                await flushCanvas();
                 await post("/projects/" + s.projectId + "/versions", {
                   name: "快照 " + new Date().toLocaleTimeString(),
                 });
@@ -1075,16 +1097,25 @@ function CanvasInner() {
                 <Button
                   onClick={() =>
                     action.run(async () => {
+                      await flushCanvas();
                       const result = await post<Project>(
                         "/projects/" + s.projectId + "/restore/" + v.id,
                       );
                       revision.current = result.revision;
-                      setGraph({
+                      const restored = {
                         nodes: result.canvas.nodes as WorkNode[],
                         edges: result.canvas.edges,
                         hiddenTaskIds: result.canvas.hiddenTaskIds || [],
                         hiddenImageIds: result.canvas.hiddenImageIds || [],
-                      });
+                      };
+                      graphRef.current = restored;
+                      setGraph(restored);
+                      pendingSave.current = false;
+                      setSaved("已保存");
+                      setUndo([]);
+                      setRedo([]);
+                      if (result.canvas.viewport)
+                        await flow.setViewport(result.canvas.viewport);
                       await s.refresh();
                       setVersions(null);
                     })
